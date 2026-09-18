@@ -1,0 +1,112 @@
+{
+  "Uuid": "34db09b7-6448-4c08-a014-ac1a6f04c91a",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "ExportParameters",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [],
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "import clr\r\nimport sys\r\nclr.AddReference('RevitAPI')\r\nfrom Autodesk.Revit.DB import *\r\nfrom Autodesk.Revit.DB.Structure import *\r\n\r\nclr.AddReference('RevitAPIUI')\r\nfrom Autodesk.Revit.UI import *\r\n\r\nclr.AddReference('System')\r\nimport System\r\nfrom System.Collections.Generic import List\r\nfrom System import Guid as Guid\r\nclr.AddReference('RevitNodes')\r\nimport Revit\r\nclr.ImportExtensions(Revit.GeometryConversion)\r\nclr.ImportExtensions(Revit.Elements)\r\n\r\nclr.AddReference('RevitServices')\r\nimport RevitServices\r\nfrom RevitServices.Persistence import DocumentManager\r\nfrom RevitServices.Transactions import TransactionManager\r\n\r\ndoc = DocumentManager.Instance.CurrentDBDocument\r\nuidoc=DocumentManager.Instance.CurrentUIApplication.ActiveUIDocument\r\nuiapp = DocumentManager.Instance.CurrentUIApplication\r\napp = uiapp.Application\r\n\r\n#Preparing input from dynamo to revit\r\nelement = UnwrapElement(IN[0])\r\n\r\n#Do some action in a Transaction\r\nTransactionManager.Instance.EnsureInTransaction(doc)\r\nparameters = FilteredElementCollector(doc).OfClass(SharedParameterElement).WhereElementIsNotElementType()\r\n\r\ndefinition_file = app.OpenSharedParameterFile()\r\ndefinition_groups = definition_file.Groups\r\n\r\n\r\ntry:\r\n    definition_groups.Create(\"Exported Parameters\")\r\nexcept Exception as e:\r\n    print(e)\r\n    \r\n\r\n\r\ndef export_shared_parameters(definition_groups):\r\n    exported_definitions = dict()\r\n    for i in definition_groups:\r\n        if i.Name != \"Exported Parameters\":\r\n            continue\r\n        names = [definition.Name for definition in i.Definitions]\r\n        for parameter in parameters:\r\n            if parameter.Name in names:\r\n                continue\r\n            definition = parameter.GetDefinition()\r\n            try:\r\n                options = ExternalDefinitionCreationOptions(parameter.Name, definition.GetDataType())\r\n            except Exception as e:\r\n                print(e)\r\n            options.GUID = parameter.GuidValue\r\n            try:\r\n                exported_definition = i.Definitions.Create(options)\r\n                exported_definitions[parameter.Name] = exported_definition\r\n            except Exception as e:\r\n                print(e)\r\n    return {\"Exported Definitions\": exported_definitions}\r\nOUT = export_shared_parameters(definition_groups)",
+      "Engine": "CPython3",
+      "VariableInputPorts": true,
+      "Id": "999aa144241b4a59b48f73fa246b3717",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [
+        {
+          "Id": "e3354488d7c54a38955ec8c6a6c9f00f",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "1d5bac6fc9a84eaab755259753ae20a4",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Connectors": [],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [],
+  "EnableLegacyPolyCurveBehavior": true,
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "3.3",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "8.2",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "3.3.0.6316",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "999aa144241b4a59b48f73fa246b3717",
+        "Name": "Export Shared Parameter Definitions",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 134.37885463663508,
+        "Y": 129.2667908630697
+      }
+    ],
+    "Annotations": [],
+    "X": 52.04050995285189,
+    "Y": 64.68205341368332,
+    "Zoom": 0.9100638039314393
+  }
+}

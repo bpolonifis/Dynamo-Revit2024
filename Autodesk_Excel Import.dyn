@@ -1,0 +1,725 @@
+{
+  "Uuid": "f86432c5-b1e6-4329-99c5-d69016e6190e",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "Excel Import",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [],
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "# Dynamo Python node script for Revit 2026\r\n# Purpose: read Excel rows containing a Revit Element ID column and a value column,\r\n#          then write the value into a custom instance parameter on the matching Revit element.\r\n#\r\n# Recommended Dynamo inputs:\r\n# IN[0] = Excel data as rows, from Data.OpenXML.ImportExcel / Excel.ReadFromFile, with a header row\r\n# IN[1] = Target Revit parameter name to write, e.g. \"WBS Code\"\r\n# IN[2] = Element ID header name, e.g. \"ID\"\r\n# IN[3] = Excel value header name, e.g. \"WBS Code\"\r\n# IN[4] = Dry run? True previews only, False writes to Revit. Recommended first run: True\r\n# IN[5] = Sheet index if your Excel node returns all sheets. Default: 0\r\n# IN[6] = Clear blank values? False skips blank WBS values. True writes blanks\r\n# IN[7] = If instance parameter is missing, try type parameter? Default: False\r\n#\r\n# Output: [status text, summary dictionary, report table]\r\n\r\nimport clr\r\nimport re\r\nimport math\r\n\r\nclr.AddReference('RevitAPI')\r\nfrom Autodesk.Revit.DB import ElementId, StorageType\r\n\r\nclr.AddReference('RevitServices')\r\nfrom RevitServices.Persistence import DocumentManager\r\nfrom RevitServices.Transactions import TransactionManager\r\n\r\nfrom System import Int64\r\n\r\n\r\ndoc = DocumentManager.Instance.CurrentDBDocument\r\n\r\n\r\ndef get_input(index, default_value=None):\r\n    try:\r\n        if len(IN) > index and IN[index] is not None:\r\n            return IN[index]\r\n    except Exception:\r\n        pass\r\n    return default_value\r\n\r\n\r\ndef to_bool(value, default_value=False):\r\n    if value is None:\r\n        return default_value\r\n    if isinstance(value, bool):\r\n        return value\r\n    s = str(value).strip().lower()\r\n    if s in (\"true\", \"t\", \"yes\", \"y\", \"1\"):\r\n        return True\r\n    if s in (\"false\", \"f\", \"no\", \"n\", \"0\"):\r\n        return False\r\n    return default_value\r\n\r\n\r\ndef to_int(value, default_value=0):\r\n    try:\r\n        return int(float(str(value).strip()))\r\n    except Exception:\r\n        return default_value\r\n\r\n\r\ndef is_sequence(value):\r\n    return isinstance(value, (list, tuple))\r\n\r\n\r\ndef choose_table(data, sheet_index):\r\n    \"\"\"Accepts either rows or sheets->rows and returns one table as rows.\"\"\"\r\n    if data is None:\r\n        return []\r\n    if not is_sequence(data):\r\n        return []\r\n    if len(data) == 0:\r\n        return []\r\n\r\n    # If this is sheets -> rows -> cells, data[0][0] is a row list.\r\n    try:\r\n        first_non_empty = None\r\n        for item in data:\r\n            if item is not None and (not is_sequence(item) or len(item) > 0):\r\n                first_non_empty = item\r\n                break\r\n        if is_sequence(first_non_empty) and len(first_non_empty) > 0 and is_sequence(first_non_empty[0]):\r\n            idx = max(0, min(sheet_index, len(data) - 1))\r\n            return data[idx]\r\n    except Exception:\r\n        pass\r\n\r\n    # Otherwise assume this is already rows -> cells.\r\n    return data\r\n\r\n\r\ndef normalize_header(value):\r\n    if value is None:\r\n        return \"\"\r\n    s = str(value).strip().lower()\r\n    s = s.replace(\"\\n\", \" \").replace(\"\\r\", \" \").replace(\"_\", \" \").replace(\"-\", \" \")\r\n    while \"  \" in s:\r\n        s = s.replace(\"  \", \" \")\r\n    return s\r\n\r\n\r\ndef make_header_map(row):\r\n    mapping = {}\r\n    for index, value in enumerate(row):\r\n        key = normalize_header(value)\r\n        if key and key not in mapping:\r\n            mapping[key] = index\r\n    return mapping\r\n\r\n\r\ndef find_column(header_map, names):\r\n    for name in names:\r\n        key = normalize_header(name)\r\n        if key in header_map:\r\n            return header_map[key]\r\n    return None\r\n\r\n\r\ndef get_cell(row, index):\r\n    if not is_sequence(row):\r\n        return None\r\n    if index is None or index < 0 or index >= len(row):\r\n        return None\r\n    return row[index]\r\n\r\n\r\ndef cell_to_text(value):\r\n    if value is None:\r\n        return \"\"\r\n    if isinstance(value, float):\r\n        if math.isfinite(value) and abs(value - round(value)) < 0.0000001:\r\n            return str(int(round(value)))\r\n        return str(value).strip()\r\n    return str(value).strip()\r\n\r\n\r\ndef parse_element_id(value):\r\n    if value is None or isinstance(value, bool):\r\n        return None\r\n\r\n    # Already a Revit ElementId.\r\n    try:\r\n        if isinstance(value, ElementId):\r\n            return int(value.Value)\r\n    except Exception:\r\n        pass\r\n\r\n    if isinstance(value, int):\r\n        return int(value)\r\n\r\n    if isinstance(value, float):\r\n        if math.isfinite(value) and abs(value - round(value)) < 0.0000001:\r\n            return int(round(value))\r\n        return None\r\n\r\n    s = str(value).strip()\r\n    if not s:\r\n        return None\r\n\r\n    # Common Excel/string cleanup.\r\n    s = s.replace(\",\", \"\")\r\n    if s.startswith(\"'\"):\r\n        s = s[1:]\r\n\r\n    # Accept \"2473950\", \"2473950.0\", or scientific notation produced by Excel.\r\n    try:\r\n        f = float(s)\r\n        if math.isfinite(f) and abs(f - round(f)) < 0.0000001:\r\n            return int(round(f))\r\n    except Exception:\r\n        pass\r\n\r\n    # Last fallback for text such as \"ElementId(2473950)\".\r\n    m = re.search(r\"-?\\d+\", s)\r\n    if m:\r\n        try:\r\n            return int(m.group(0))\r\n        except Exception:\r\n            return None\r\n\r\n    return None\r\n\r\n\r\ndef element_name(element):\r\n    try:\r\n        return element.Name\r\n    except Exception:\r\n        try:\r\n            return element.GetType().Name\r\n        except Exception:\r\n            return \"\"\r\n\r\n\r\ndef get_target_parameter(element, parameter_name, allow_type_parameter):\r\n    parameter = element.LookupParameter(parameter_name)\r\n    source = \"Instance\"\r\n\r\n    if parameter is None and allow_type_parameter:\r\n        try:\r\n            type_id = element.GetTypeId()\r\n            if type_id is not None and type_id != ElementId.InvalidElementId:\r\n                element_type = doc.GetElement(type_id)\r\n                if element_type is not None:\r\n                    parameter = element_type.LookupParameter(parameter_name)\r\n                    source = \"Type\"\r\n        except Exception:\r\n            parameter = None\r\n\r\n    return parameter, source\r\n\r\n\r\ndef set_parameter_value(parameter, value):\r\n    storage_type = parameter.StorageType\r\n\r\n    if storage_type == StorageType.String:\r\n        return parameter.Set(cell_to_text(value))\r\n\r\n    if storage_type == StorageType.Integer:\r\n        text = cell_to_text(value)\r\n        number = 0 if text == \"\" else int(float(text))\r\n        return parameter.Set(number)\r\n\r\n    if storage_type == StorageType.Double:\r\n        text = cell_to_text(value)\r\n        number = 0.0 if text == \"\" else float(text)\r\n        return parameter.Set(number)\r\n\r\n    if storage_type == StorageType.ElementId:\r\n        eid_value = parse_element_id(value)\r\n        if eid_value is None:\r\n            raise Exception(\"Value cannot be converted to ElementId\")\r\n        return parameter.Set(ElementId(Int64(eid_value)))\r\n\r\n    raise Exception(\"Unsupported parameter storage type: {0}\".format(storage_type))\r\n\r\n\r\nexcel_data = get_input(0, [])\r\ntarget_parameter_name = cell_to_text(get_input(1, \"WBS Code\"))\r\nid_header_name = cell_to_text(get_input(2, \"ID\"))\r\nvalue_header_name = cell_to_text(get_input(3, \"WBS Code\"))\r\ndry_run = to_bool(get_input(4, True), True)\r\nsheet_index = to_int(get_input(5, 0), 0)\r\nclear_blank_values = to_bool(get_input(6, False), False)\r\ntry_type_parameter_if_missing = to_bool(get_input(7, False), False)\r\n\r\nrows = choose_table(excel_data, sheet_index)\r\nreport_header = [\"Excel Row\", \"Element ID\", \"Element Name\", \"Parameter\", \"Value\", \"Status\", \"Message\"]\r\nreport = []\r\nsummary = {\r\n    \"target_parameter\": target_parameter_name,\r\n    \"id_header\": id_header_name,\r\n    \"value_header\": value_header_name,\r\n    \"dry_run\": dry_run,\r\n    \"total_data_rows\": 0,\r\n    \"preview_or_updated\": 0,\r\n    \"already_or_blank_skipped\": 0,\r\n    \"invalid_id\": 0,\r\n    \"element_not_found\": 0,\r\n    \"parameter_missing\": 0,\r\n    \"read_only\": 0,\r\n    \"failed\": 0,\r\n    \"duplicates_seen\": 0\r\n}\r\n\r\nif not target_parameter_name:\r\n    OUT = [\"ERROR: Target parameter name is blank.\", summary, [report_header] + report]\r\nelif not rows or not is_sequence(rows):\r\n    OUT = [\"ERROR: No Excel rows received. Check the Excel import node and Python IN[0].\", summary, [report_header] + report]\r\nelse:\r\n    # Find the header row. This lets the file contain a title row above the actual headers.\r\n    header_row_index = None\r\n    id_column_index = None\r\n    value_column_index = None\r\n\r\n    id_candidates = [id_header_name, \"ID\", \"Element ID\", \"Revit Element ID\", \"Revit ID\", \"ElementId\"]\r\n    value_candidates = [value_header_name]\r\n\r\n    search_limit = min(30, len(rows))\r\n    for row_index in range(search_limit):\r\n        row = rows[row_index]\r\n        if not is_sequence(row):\r\n            continue\r\n        header_map = make_header_map(row)\r\n        possible_id_column = find_column(header_map, id_candidates)\r\n        possible_value_column = find_column(header_map, value_candidates)\r\n        if possible_id_column is not None and possible_value_column is not None:\r\n            header_row_index = row_index\r\n            id_column_index = possible_id_column\r\n            value_column_index = possible_value_column\r\n            break\r\n\r\n    if header_row_index is None:\r\n        sample_headers = []\r\n        try:\r\n            sample_headers = [cell_to_text(x) for x in rows[0]]\r\n        except Exception:\r\n            sample_headers = []\r\n        OUT = [\r\n            \"ERROR: Could not find headers '{0}' and '{1}' in the first 30 rows.\".format(id_header_name, value_header_name),\r\n            summary,\r\n            [report_header] + [[1, \"\", \"\", target_parameter_name, \"\", \"HeaderNotFound\", \", \".join(sample_headers)]]\r\n        ]\r\n    else:\r\n        seen_ids = set()\r\n        transaction_started = False\r\n\r\n        try:\r\n            if not dry_run:\r\n                TransactionManager.Instance.EnsureInTransaction(doc)\r\n                transaction_started = True\r\n\r\n            for excel_row_number, row in enumerate(rows[header_row_index + 1:], header_row_index + 2):\r\n                if not is_sequence(row):\r\n                    continue\r\n\r\n                raw_id = get_cell(row, id_column_index)\r\n                raw_value = get_cell(row, value_column_index)\r\n                element_id_value = parse_element_id(raw_id)\r\n                value_text = cell_to_text(raw_value)\r\n\r\n                # Skip completely empty lines.\r\n                if element_id_value is None and value_text == \"\":\r\n                    continue\r\n\r\n                summary[\"total_data_rows\"] += 1\r\n\r\n                if element_id_value is None or element_id_value <= 0:\r\n                    summary[\"invalid_id\"] += 1\r\n                    report.append([excel_row_number, cell_to_text(raw_id), \"\", target_parameter_name, value_text, \"InvalidId\", \"ID is blank, zero, negative, or not numeric\"])\r\n                    continue\r\n\r\n                duplicate_note = \"\"\r\n                if element_id_value in seen_ids:\r\n                    summary[\"duplicates_seen\"] += 1\r\n                    duplicate_note = \"Duplicate Element ID in Excel; this row was still processed. \"\r\n                seen_ids.add(element_id_value)\r\n\r\n                if value_text == \"\" and not clear_blank_values:\r\n                    summary[\"already_or_blank_skipped\"] += 1\r\n                    report.append([excel_row_number, element_id_value, \"\", target_parameter_name, value_text, \"BlankSkipped\", duplicate_note + \"Blank value skipped; set Clear Blank Values to True to clear the parameter\"])\r\n                    continue\r\n\r\n                try:\r\n                    element = doc.GetElement(ElementId(Int64(element_id_value)))\r\n                except Exception as ex_get:\r\n                    element = None\r\n                    summary[\"failed\"] += 1\r\n                    report.append([excel_row_number, element_id_value, \"\", target_parameter_name, value_text, \"Failed\", duplicate_note + \"Could not create/get ElementId: {0}\".format(ex_get)])\r\n                    continue\r\n\r\n                if element is None:\r\n                    summary[\"element_not_found\"] += 1\r\n                    report.append([excel_row_number, element_id_value, \"\", target_parameter_name, value_text, \"ElementNotFound\", duplicate_note + \"No element with this ID exists in the active Revit document\"])\r\n                    continue\r\n\r\n                parameter, parameter_source = get_target_parameter(element, target_parameter_name, try_type_parameter_if_missing)\r\n\r\n                if parameter is None:\r\n                    summary[\"parameter_missing\"] += 1\r\n                    report.append([excel_row_number, element_id_value, element_name(element), target_parameter_name, value_text, \"ParameterMissing\", duplicate_note + \"Parameter not found on the element instance\"])\r\n                    continue\r\n\r\n                if parameter.IsReadOnly:\r\n                    summary[\"read_only\"] += 1\r\n                    report.append([excel_row_number, element_id_value, element_name(element), target_parameter_name, value_text, \"ReadOnly\", duplicate_note + \"Parameter exists but is read-only\"])\r\n                    continue\r\n\r\n                if dry_run:\r\n                    summary[\"preview_or_updated\"] += 1\r\n                    report.append([excel_row_number, element_id_value, element_name(element), target_parameter_name, value_text, \"Preview\", duplicate_note + \"Would write to {0} parameter\".format(parameter_source)])\r\n                    continue\r\n\r\n                try:\r\n                    set_parameter_value(parameter, raw_value)\r\n                    summary[\"preview_or_updated\"] += 1\r\n                    report.append([excel_row_number, element_id_value, element_name(element), target_parameter_name, value_text, \"Updated\", duplicate_note + \"Written to {0} parameter\".format(parameter_source)])\r\n                except Exception as ex_set:\r\n                    summary[\"failed\"] += 1\r\n                    report.append([excel_row_number, element_id_value, element_name(element), target_parameter_name, value_text, \"Failed\", duplicate_note + str(ex_set)])\r\n\r\n        finally:\r\n            if transaction_started:\r\n                TransactionManager.Instance.TransactionTaskDone()\r\n\r\n        status_text = \"Dry run complete. No Revit changes were made.\" if dry_run else \"Complete. Revit parameters were updated where possible.\"\r\n        OUT = [status_text, summary, [report_header] + report]\r\n",
+      "Engine": "CPython3",
+      "VariableInputPorts": true,
+      "Id": "4563f747ea0742458e6805ea452a09dc",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [
+        {
+          "Id": "dc1ce875633f4b9ca1048e1b9b4a1440",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "4adac062d08e4dec89221fd3cf9e2526",
+          "Name": "IN[1]",
+          "Description": "Input #1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "586904311ba14d9781df7e368bd3183b",
+          "Name": "IN[2]",
+          "Description": "Input #2",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "10f75964ec2c4f5bb91beecd56d51531",
+          "Name": "IN[3]",
+          "Description": "Input #3",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "a11e4f417c584cb79bdb5a427dba1d53",
+          "Name": "IN[4]",
+          "Description": "Input #4",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "66252ce4e26640cf827ad54198865072",
+          "Name": "IN[5]",
+          "Description": "Input #5",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "917602c680ee461da24f7a97f0f27132",
+          "Name": "IN[6]",
+          "Description": "Input #6",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "4ac67928d85b4690adfeed4d3dc2dd25",
+          "Name": "IN[7]",
+          "Description": "Input #7",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "f4ce179c09fd49e39efd1fa769913f50",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.ZeroTouch.DSFunction, DynamoCore",
+      "Id": "3fac9b6c4ca740ccbd6f78cec61695ec",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "86e5243dee8c4e4e8b71b920cad6e4fc",
+          "Name": "filePath",
+          "Description": "string",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "62b1e651b2224c1c937e2a80f832c652",
+          "Name": "sheetName",
+          "Description": "string",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "dc082691f1af49e1b3ef9be65a54c25a",
+          "Name": "startRow",
+          "Description": "int\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "3c573cccea6d41d8b94f81e6883e1ea0",
+          "Name": "startColumn",
+          "Description": "int\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "e9b3ef7a5eeb4943a570586dd41698c1",
+          "Name": "readAsString",
+          "Description": "bool\nDefault value : false",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "99122d806c63404fb8233669898817b4",
+          "Name": "var[][]",
+          "Description": "var[][]",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "FunctionSignature": "DSOffice.Data.OpenXMLImportExcel@string,string,int,int,bool",
+      "Replication": "Auto",
+      "Description": "Data.OpenXMLImportExcel (filePath: string, sheetName: string, startRow: int = 0, startColumn: int = 0, readAsString: bool = false): var[][]"
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Input.Filename, CoreNodeModels",
+      "Id": "d8fd7fa4c8ed4b8a90e4f12b3b4e4fba",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "a840602d133b4dbe9b73c8f9e33bb12c",
+          "Name": "",
+          "Description": "File Path",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows you to select a file on the system and returns its file path",
+      "HintPath": "C:\\Users\\bhardws\\Downloads\\Podium_2026_05_18_09-23-17.xlsx",
+      "InputValue": ".\\Podium_2026_05_18_09-23-17.xlsx"
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Input.StringInput, CoreNodeModels",
+      "SerializedWidth": 0.0,
+      "SerializedHeight": 0.0,
+      "Id": "fb9f815c70ac40fb965c4ae95b96f558",
+      "NodeType": "StringInputNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "c998be1c5e68442791c2c55ae701ac15",
+          "Name": "",
+          "Description": "String",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Creates a string.",
+      "InputValue": "Sheet1"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "cf17052b449942989be30d2a77c0a2f5",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "763c6d74d00f46a18bb85f367e2c6279",
+          "Name": "",
+          "Description": "Value of expression at line 1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "\"WBS Code\";"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "9d9fc1c2fbbf480d8e0f2176407152ba",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "3a432966a11d4798a4e74dbeace19283",
+          "Name": "",
+          "Description": "Value of expression at line 1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "\"false\";"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "128a2cc7b5914cc898c70f38a42dd9b0",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "f74dbc2ff9bb4cdc86c05fea9dcd1542",
+          "Name": "",
+          "Description": "Value of expression at line 1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "\"false\";"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "df59cc3764044e76bfc59190a7067775",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "03c5f970b96e46bd806603f8c20af2da",
+          "Name": "",
+          "Description": "Value of expression at line 1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "\"0\";"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "cdb6ca239583484ab53d753d5b3d75f3",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "7ac0171e933e4e318189327b385095de",
+          "Name": "",
+          "Description": "Value of expression at line 1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "\"WBS Code\";"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "d8392d9531444f5889de78d9a2229679",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "b8c6e7be21514b3c888785fb51657cf5",
+          "Name": "",
+          "Description": "Value of expression at line 1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "\"ID\";"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "6730503d426746a6844d10bc4029dd45",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "04871d4e20ce46b3aed7c236d1d21b71",
+          "Name": "",
+          "Description": "Value of expression at line 1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "\"false\";"
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Watch, CoreNodeModels",
+      "WatchWidth": 200.0,
+      "WatchHeight": 200.0,
+      "Id": "d845320fa82e4b74bb6ef2e26bcee579",
+      "NodeType": "ExtensionNode",
+      "Inputs": [
+        {
+          "Id": "6956a46bda10441d9527cb3698c7241f",
+          "Name": "",
+          "Description": "Node to show output from",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "a56e8e23f9bd4fb4ba0f8f679a9195eb",
+          "Name": "",
+          "Description": "Node output",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Visualizes a node's output"
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Input.StringInput, CoreNodeModels",
+      "SerializedWidth": 0.0,
+      "SerializedHeight": 0.0,
+      "Id": "75d5bfbd79bb4410b4f57175e3e4db39",
+      "NodeType": "StringInputNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "b0a89ca5873545309aa3bff3da7ced24",
+          "Name": "",
+          "Description": "String",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Creates a string.",
+      "InputValue": "true"
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Watch, CoreNodeModels",
+      "WatchWidth": 200.0,
+      "WatchHeight": 200.0,
+      "Id": "c27274400af44c4683aeca2b1144e866",
+      "NodeType": "ExtensionNode",
+      "Inputs": [
+        {
+          "Id": "dea44ffb182f4656bc5e372f011f8212",
+          "Name": "",
+          "Description": "Node to show output from",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "3deefb67faa84097b153df74411c75e2",
+          "Name": "",
+          "Description": "Node output",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Visualizes a node's output"
+    }
+  ],
+  "Connectors": [
+    {
+      "Start": "f4ce179c09fd49e39efd1fa769913f50",
+      "End": "6956a46bda10441d9527cb3698c7241f",
+      "Id": "8659163c255648738a9ebb073e0a8a7f",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "99122d806c63404fb8233669898817b4",
+      "End": "dc1ce875633f4b9ca1048e1b9b4a1440",
+      "Id": "9b481d565edf4d50950a93b2b2bae3b0",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "99122d806c63404fb8233669898817b4",
+      "End": "dea44ffb182f4656bc5e372f011f8212",
+      "Id": "71985273c2bb480dad8de979b5fc7e1a",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "a840602d133b4dbe9b73c8f9e33bb12c",
+      "End": "86e5243dee8c4e4e8b71b920cad6e4fc",
+      "Id": "efe2f8c49f054134bb0ab319f68b4c64",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "c998be1c5e68442791c2c55ae701ac15",
+      "End": "62b1e651b2224c1c937e2a80f832c652",
+      "Id": "2d992560851f44fc89ba17d2f49ba870",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "763c6d74d00f46a18bb85f367e2c6279",
+      "End": "4adac062d08e4dec89221fd3cf9e2526",
+      "Id": "b77d638f7eb4490e8b2cf9ef4a5a4c41",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "3a432966a11d4798a4e74dbeace19283",
+      "End": "4ac67928d85b4690adfeed4d3dc2dd25",
+      "Id": "91ccc551c3e84439ad9ef71f063127b1",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "f74dbc2ff9bb4cdc86c05fea9dcd1542",
+      "End": "917602c680ee461da24f7a97f0f27132",
+      "Id": "15ed78503e4a440a93b0de3276ae423c",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "03c5f970b96e46bd806603f8c20af2da",
+      "End": "66252ce4e26640cf827ad54198865072",
+      "Id": "276187c34da246ffae75ae43d2c80e3c",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "7ac0171e933e4e318189327b385095de",
+      "End": "10f75964ec2c4f5bb91beecd56d51531",
+      "Id": "ba538cc2ccb747f8961f914672e25e6e",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "b8c6e7be21514b3c888785fb51657cf5",
+      "End": "586904311ba14d9781df7e368bd3183b",
+      "Id": "ffbb88b73eb34386bce5ff835889ce38",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "04871d4e20ce46b3aed7c236d1d21b71",
+      "End": "a11e4f417c584cb79bdb5a427dba1d53",
+      "Id": "e8b68c97c67c43d08910b3e528155403",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "b0a89ca5873545309aa3bff3da7ced24",
+      "End": "e9b3ef7a5eeb4943a570586dd41698c1",
+      "Id": "d266d115753b485bbdae48cc6334df74",
+      "IsHidden": "False"
+    }
+  ],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [
+    {
+      "Name": "Podium_2026_05_18_09-23-17.xlsx",
+      "ReferenceType": "External",
+      "Nodes": [
+        "d8fd7fa4c8ed4b8a90e4f12b3b4e4fba"
+      ]
+    }
+  ],
+  "EnableLegacyPolyCurveBehavior": true,
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "3.5",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "9.1",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "3.5.2.8914",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "4563f747ea0742458e6805ea452a09dc",
+        "Name": "Python Script",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1357.8395086350681,
+        "Y": 609.9241843677471
+      },
+      {
+        "Id": "3fac9b6c4ca740ccbd6f78cec61695ec",
+        "Name": "Data.OpenXMLImportExcel",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 856.1414086147714,
+        "Y": 294.3493597606713
+      },
+      {
+        "Id": "d8fd7fa4c8ed4b8a90e4f12b3b4e4fba",
+        "Name": "File Path",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": -141.98298225332445,
+        "Y": 62.972118923021185
+      },
+      {
+        "Id": "fb9f815c70ac40fb965c4ae95b96f558",
+        "Name": "String",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 310.6457815608386,
+        "Y": 377.77323342698605
+      },
+      {
+        "Id": "cf17052b449942989be30d2a77c0a2f5",
+        "Name": "Code Block",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 810.0,
+        "Y": 690.0
+      },
+      {
+        "Id": "9d9fc1c2fbbf480d8e0f2176407152ba",
+        "Name": "Code Block",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 796.993031131117,
+        "Y": 1525.2192659238044
+      },
+      {
+        "Id": "128a2cc7b5914cc898c70f38a42dd9b0",
+        "Name": "Code Block",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 795.2278998267436,
+        "Y": 1379.7986748654644
+      },
+      {
+        "Id": "df59cc3764044e76bfc59190a7067775",
+        "Name": "Code Block",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 775.8181074229939,
+        "Y": 1209.7756432836081
+      },
+      {
+        "Id": "cdb6ca239583484ab53d753d5b3d75f3",
+        "Name": "Code Block",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 806.472864745279,
+        "Y": 949.3424253197314
+      },
+      {
+        "Id": "d8392d9531444f5889de78d9a2229679",
+        "Name": "Code Block",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 808.8302728413046,
+        "Y": 821.526827966005
+      },
+      {
+        "Id": "6730503d426746a6844d10bc4029dd45",
+        "Name": "Code Block",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 835.1619414217166,
+        "Y": 1068.336022381975
+      },
+      {
+        "Id": "d845320fa82e4b74bb6ef2e26bcee579",
+        "Name": "Watch",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1766.518789236105,
+        "Y": 517.4844521281666
+      },
+      {
+        "Id": "75d5bfbd79bb4410b4f57175e3e4db39",
+        "Name": "String",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 312.0176227949181,
+        "Y": 572.8597682737184
+      },
+      {
+        "Id": "c27274400af44c4683aeca2b1144e866",
+        "Name": "Watch",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1303.6772732468633,
+        "Y": 71.4922679442594
+      }
+    ],
+    "Annotations": [],
+    "X": 240.22056025843398,
+    "Y": 65.84093852976153,
+    "Zoom": 0.19338021712637646
+  }
+}

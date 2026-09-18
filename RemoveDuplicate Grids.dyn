@@ -1,0 +1,340 @@
+{
+  "Uuid": "ec46fd71-8276-4caa-a20b-501bb1bffae4",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "RemoveDuplicate Grids",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [
+    {
+      "Id": "1cd94c77907049418c7822966e53df33",
+      "Name": "Python Script",
+      "Type": "unknown",
+      "InitialValue": "",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Nodes": [
+    {
+      "ConcreteType": "DSRevitNodesUI.ElementsOfCategory, DSRevitNodesUI",
+      "Id": "acd3a8326da04ef18798ff53af7d0f5a",
+      "NodeType": "ExtensionNode",
+      "Inputs": [
+        {
+          "Id": "1ad4ef59f5e14229a94119fb42ac938d",
+          "Name": "Category",
+          "Description": "The Category",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "7e72db89a421481f999b236d9d7e8df7",
+          "Name": "Elements",
+          "Description": "An element class.",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Get all elements of the specified category from the model."
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Input.StringInput, CoreNodeModels",
+      "Id": "864abca490d343a58233bc51f8569aeb",
+      "NodeType": "StringInputNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "0ee0dde6d0b64ee19afccd30a48a787d",
+          "Name": "",
+          "Description": "String",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Creates a string",
+      "InputValue": "Name"
+    },
+    {
+      "ConcreteType": "DSRevitNodesUI.Categories, DSRevitNodesUI",
+      "SelectedIndex": 270,
+      "SelectedString": "OST_Grids",
+      "Id": "f4daaf55c2c24d7eb946acc2b5076b6d",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "c9c01b98640d4775942d2fc81c066ce2",
+          "Name": "Category",
+          "Description": "The selected Category.",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "All built-in categories."
+    },
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "# IN[0] = flat list of name STRINGS (use Flatten node if nested)\r\n# IN[1] = list of grid ELEMENTS (same length/order)\r\n\r\nnames = IN[0]  # Ensure flat: strings only!\r\ngrids = IN[1]\r\n\r\nfrom collections import OrderedDict  # Preserves first occurrence order\r\n\r\nseen = OrderedDict()\r\nduplicates = []\r\n\r\nfor i, name in enumerate(names):\r\n    if name in seen:\r\n        duplicates.append(grids[i])\r\n    else:\r\n        seen[name] = True  # str is hashable!\r\n\r\nOUT = duplicates  # Grids to delete (connect to Element.Delete)\r\n",
+      "Engine": "CPython3",
+      "EngineName": "CPython3",
+      "VariableInputPorts": true,
+      "Id": "1cd94c77907049418c7822966e53df33",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [
+        {
+          "Id": "7bfd091adda740fe8ef057b1b3bfce17",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "eca250305ed14094a5af890113c94ae7",
+          "Name": "IN[1]",
+          "Description": "Input #1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "2791fed2f78e4c0896647cd1eb1a7260",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.ZeroTouch.DSFunction, DynamoCore",
+      "Id": "705bf522aa5c4ee983bc03463727892a",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "e6ffcd7660994d91b1e0f5ed2d52cacf",
+          "Name": "element",
+          "Description": "The element to delete.\n\nElement",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "ca505a3123834c8996b3543c031aba01",
+          "Name": "int[]",
+          "Description": "The list of element id's deleted, including any dependent elements.",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "FunctionSignature": "Revit.Elements.Element.Delete@Revit.Elements.Element",
+      "Replication": "Auto",
+      "Description": "Delete the element and any elements that are totally dependent upon the element.\n\nElement.Delete (element: Element): int[]"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.ZeroTouch.DSFunction, DynamoCore",
+      "Id": "017df13a1bc247adbaf88073e0d60856",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "fdf8b7bc4a5e4d2c9ca6c836ec10a626",
+          "Name": "element",
+          "Description": "Revit.Elements.Element",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "824054f392b04ceaa254989b511b7e9d",
+          "Name": "string",
+          "Description": "string",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "FunctionSignature": "Revit.Elements.Element.Name",
+      "Replication": "Auto",
+      "Description": "Get the Name of the Element\n\nElement.Name: string"
+    }
+  ],
+  "Connectors": [
+    {
+      "Start": "7e72db89a421481f999b236d9d7e8df7",
+      "End": "eca250305ed14094a5af890113c94ae7",
+      "Id": "1950603012e14069a7b3551783d10898",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "7e72db89a421481f999b236d9d7e8df7",
+      "End": "fdf8b7bc4a5e4d2c9ca6c836ec10a626",
+      "Id": "411e0f1bf59547b68e035267a9e68979",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "c9c01b98640d4775942d2fc81c066ce2",
+      "End": "1ad4ef59f5e14229a94119fb42ac938d",
+      "Id": "14ad660a8e124bcaa0f0f821879363d6",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "2791fed2f78e4c0896647cd1eb1a7260",
+      "End": "e6ffcd7660994d91b1e0f5ed2d52cacf",
+      "Id": "db8d98892d264b4f91a6469b66dcd0ed",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "824054f392b04ceaa254989b511b7e9d",
+      "End": "7bfd091adda740fe8ef057b1b3bfce17",
+      "Id": "61352643b1d3413ca692849905546b87",
+      "IsHidden": "False"
+    }
+  ],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [],
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "2.19",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "6.1",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.19.3.6394",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "acd3a8326da04ef18798ff53af7d0f5a",
+        "Name": "All Elements of Category",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 254.00631717252122,
+        "Y": 703.68871946115621
+      },
+      {
+        "Id": "864abca490d343a58233bc51f8569aeb",
+        "Name": "String",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 153.52809069863076,
+        "Y": -25.152868349210621
+      },
+      {
+        "Id": "f4daaf55c2c24d7eb946acc2b5076b6d",
+        "Name": "Categories",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": -208.1069015360211,
+        "Y": 712.86945693570146
+      },
+      {
+        "Id": "1cd94c77907049418c7822966e53df33",
+        "Name": "Python Script",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": true,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1027.1457477627614,
+        "Y": 488.77948622128076
+      },
+      {
+        "Id": "705bf522aa5c4ee983bc03463727892a",
+        "Name": "Element.Delete",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1344.4809155537077,
+        "Y": 491.75964303222685
+      },
+      {
+        "Id": "017df13a1bc247adbaf88073e0d60856",
+        "Name": "Element.Name",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 629.65362347742348,
+        "Y": 385.84605522561003
+      }
+    ],
+    "Annotations": [],
+    "X": -38.829581037559308,
+    "Y": 253.53143904964233,
+    "Zoom": 0.42795410055194288
+  }
+}

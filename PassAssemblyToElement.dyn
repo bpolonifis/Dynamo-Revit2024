@@ -1,0 +1,264 @@
+{
+  "Uuid": "de85c921-b348-4a79-905a-a6788d6b6b32",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "PassAssemblyToElement",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [
+    {
+      "Id": "13736c80ad73400ca98e966e90d39a35",
+      "Name": "Categories",
+      "Type": "selection",
+      "Type2": "dropdownSelection",
+      "Value": "OST_Assemblies",
+      "Description": "All built-in categories.",
+      "SelectedIndex": 76
+    }
+  ],
+  "Outputs": [
+    {
+      "Id": "2012d7297ef443688680da301298de20",
+      "Name": "Python Script",
+      "Type": "unknown",
+      "InitialValue": "",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Nodes": [
+    {
+      "ConcreteType": "DSRevitNodesUI.Categories, DSRevitNodesUI",
+      "SelectedIndex": 76,
+      "SelectedString": "OST_Assemblies",
+      "Id": "13736c80ad73400ca98e966e90d39a35",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "c4715ac2921941058da9825b6d2939a7",
+          "Name": "Category",
+          "Description": "The selected Category.",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "All built-in categories."
+    },
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "import clr\r\n\r\n# Revit API\r\nclr.AddReference('RevitAPI')\r\nfrom Autodesk.Revit.DB import *\r\n\r\n# Revit Services\r\nclr.AddReference('RevitServices')\r\nfrom RevitServices.Persistence import DocumentManager\r\nfrom RevitServices.Transactions import TransactionManager\r\n\r\n# Current document\r\ndoc = DocumentManager.Instance.CurrentDBDocument\r\n\r\n# Inputs\r\nassemblies = UnwrapElement(IN[0])\r\nparamName = IN[1]\r\n\r\nupdated = []\r\nerrors = []\r\n\r\n# Start Transaction\r\nTransactionManager.Instance.EnsureInTransaction(doc)\r\n\r\nfor assembly in assemblies:\r\n\r\n    try:\r\n\r\n        # Ensure object is AssemblyInstance\r\n        if isinstance(assembly, AssemblyInstance):\r\n\r\n            # Get source parameter from assembly\r\n            sourceParam = assembly.LookupParameter(paramName)\r\n\r\n            if sourceParam:\r\n\r\n                # Read parameter value\r\n                value = sourceParam.AsString()\r\n\r\n                # Skip empty values\r\n                if value:\r\n\r\n                    # Get all member element IDs\r\n                    memberIds = assembly.GetMemberIds()\r\n\r\n                    for memberId in memberIds:\r\n\r\n                        elem = doc.GetElement(memberId)\r\n\r\n                        if elem:\r\n\r\n                            # Find target parameter\r\n                            targetParam = elem.LookupParameter(paramName)\r\n\r\n                            # Ensure parameter exists and is writable\r\n                            if targetParam and not targetParam.IsReadOnly:\r\n\r\n                                # Handle parameter storage types\r\n                                if targetParam.StorageType == StorageType.String:\r\n                                    targetParam.Set(value)\r\n\r\n                                updated.append(elem.Id.IntegerValue)\r\n\r\n    except Exception as ex:\r\n\r\n        errors.append(str(ex))\r\n\r\n# End Transaction\r\nTransactionManager.Instance.TransactionTaskDone()\r\n\r\n# Output\r\nOUT = (updated, errors)",
+      "Engine": "CPython3",
+      "EngineName": "CPython3",
+      "VariableInputPorts": true,
+      "Id": "2012d7297ef443688680da301298de20",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [
+        {
+          "Id": "72190a646b26415e93cea29b78352bb7",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "a38de6a1e5724f02965302c33692701e",
+          "Name": "IN[1]",
+          "Description": "Input #1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "638ed8a8af3a44a8844dfb881c38f67b",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    },
+    {
+      "ConcreteType": "DSRevitNodesUI.ElementsOfCategory, DSRevitNodesUI",
+      "Id": "b712f18c034949d799a68722321c3984",
+      "NodeType": "ExtensionNode",
+      "Inputs": [
+        {
+          "Id": "08a7e2e2ae7a43e08f6f299e1148d94a",
+          "Name": "Category",
+          "Description": "The Category",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "533be3627c464352ad41c3fad06b3293",
+          "Name": "Elements",
+          "Description": "An element class.",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Get all elements of the specified category from the model."
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CustomNodes.Symbol, DynamoCore",
+      "Parameter": {
+        "Name": "JRT_4D_CODE",
+        "TypeName": "var",
+        "TypeRank": -1,
+        "DefaultValue": null,
+        "Description": ""
+      },
+      "Id": "b2b18016111f48dfbc40d5cceea1eaf6",
+      "NodeType": "InputNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "1f6cae9645cc4096a246d08fbacdca68",
+          "Name": "",
+          "Description": "Input Data",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "A function parameter, use with custom nodes.\r\n\r\nYou can specify the type and default value for parameter. E.g.,\r\n\r\ninput : var[]..[]\r\nvalue : bool = false"
+    }
+  ],
+  "Connectors": [
+    {
+      "Start": "c4715ac2921941058da9825b6d2939a7",
+      "End": "08a7e2e2ae7a43e08f6f299e1148d94a",
+      "Id": "7eceb6e82e114bebadf8080400a94214",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "533be3627c464352ad41c3fad06b3293",
+      "End": "72190a646b26415e93cea29b78352bb7",
+      "Id": "c772833ffe5b4315b05ddcec1a0b1f3e",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "1f6cae9645cc4096a246d08fbacdca68",
+      "End": "a38de6a1e5724f02965302c33692701e",
+      "Id": "b6bab3ea094b4c368794049f469a6dca",
+      "IsHidden": "False"
+    }
+  ],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [],
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "2.19",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "6.1",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.19.3.6394",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "13736c80ad73400ca98e966e90d39a35",
+        "Name": "Categories",
+        "IsSetAsInput": true,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 406.76605660759014,
+        "Y": 48.164102417405559
+      },
+      {
+        "Id": "2012d7297ef443688680da301298de20",
+        "Name": "Python Script",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": true,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1263.0063335674743,
+        "Y": 94.7648394805311
+      },
+      {
+        "Id": "b712f18c034949d799a68722321c3984",
+        "Name": "All Elements of Category",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 718.01096472078166,
+        "Y": 53.830688726807523
+      },
+      {
+        "Id": "b2b18016111f48dfbc40d5cceea1eaf6",
+        "Name": "Input",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 431.53012853844729,
+        "Y": 224.26865455680394
+      }
+    ],
+    "Annotations": [],
+    "X": -91.573646471247343,
+    "Y": 238.73526621377829,
+    "Zoom": 0.55152031146487845
+  }
+}

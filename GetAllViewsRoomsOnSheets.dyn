@@ -1,0 +1,992 @@
+{
+  "Uuid": "420002f1-7067-4d25-b925-3eb9cd50c9ba",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "GetAllViewsRoomsOnSheets",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [
+    {
+      "Id": "60353dc1148f4d9f85a841c4ab06a556",
+      "Name": "Titleblock Types",
+      "Type": "selection",
+      "Type2": "dropdownSelection",
+      "Value": "TSΟ-AR-Title Block_A0:TSO_AR_A0",
+      "Description": "Allows you to select a titleblock type from your Revit file.",
+      "SelectedIndex": 5
+    }
+  ],
+  "Outputs": [
+    {
+      "Id": "9bdef0b29a1a4d67a70358be14995ca1",
+      "Name": "Python Script 2",
+      "Type": "unknown",
+      "InitialValue": "",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "import clr\r\n\r\nclr.AddReference(\"RevitAPI\")\r\nclr.AddReference(\"RevitServices\")\r\nclr.AddReference(\"System.Windows.Forms\")\r\n\r\nfrom Autodesk.Revit.DB import *\r\nfrom RevitServices.Persistence import DocumentManager\r\nfrom RevitServices.Transactions import TransactionManager\r\nfrom System.Windows.Forms import MessageBox\r\n\r\ndoc = DocumentManager.Instance.CurrentDBDocument\r\n\r\n# ==================================================\r\n# INPUTS\r\n# ==================================================\r\n\r\nrooms = UnwrapElement(IN[0]) if IN[0] else []\r\n\r\ntitleBlockType = UnwrapElement(IN[1]) if IN[1] else None\r\n\r\nplanPoint = IN[2]\r\nnorthPoint = IN[3]\r\neastPoint = IN[4]\r\nsouthPoint = IN[5]\r\nwestPoint = IN[6]\r\n\r\nsheetPrefix = IN[7] if len(IN) > 7 and IN[7] else \"IE\"\r\n\r\n# ==================================================\r\n# HELPERS\r\n# ==================================================\r\n\r\ndef get_room_number(room):\r\n\r\n    try:\r\n        p = room.LookupParameter(\"Number\")\r\n        if p and p.HasValue:\r\n            return p.AsString()\r\n    except:\r\n        pass\r\n\r\n    return str(room.Id.IntegerValue)\r\n\r\n\r\ndef get_room_name(room):\r\n\r\n    try:\r\n        p = room.LookupParameter(\"Name\")\r\n        if p and p.HasValue:\r\n            return p.AsString()\r\n    except:\r\n        pass\r\n\r\n    return \"Unnamed\"\r\n\r\n\r\ndef get_room_title(room):\r\n\r\n    return \"{} - {}\".format(\r\n        get_room_number(room),\r\n        get_room_name(room)\r\n    )\r\n\r\n\r\ndef point_to_xyz(pt):\r\n\r\n    return XYZ(\r\n        pt.X,\r\n        pt.Y,\r\n        0\r\n    )\r\n\r\n\r\ndef sheet_exists(sheet_number):\r\n\r\n    sheets = FilteredElementCollector(doc)\\\r\n        .OfClass(ViewSheet)\r\n\r\n    for s in sheets:\r\n\r\n        try:\r\n            if s.SheetNumber.upper() == sheet_number.upper():\r\n                return True\r\n        except:\r\n            pass\r\n\r\n    return False\r\n\r\n\r\ndef find_room_views(room):\r\n\r\n    roomTitle = get_room_title(room)\r\n\r\n    plan = None\r\n    north = None\r\n    east = None\r\n    south = None\r\n    west = None\r\n\r\n    allViews = FilteredElementCollector(doc)\\\r\n        .OfClass(View)\r\n\r\n    for v in allViews:\r\n\r\n        try:\r\n\r\n            if v.IsTemplate:\r\n                continue\r\n\r\n            name = v.Name.upper()\r\n\r\n            if name == (\r\n                roomTitle + \" - PLAN\"\r\n            ).upper():\r\n\r\n                plan = v\r\n\r\n            elif name == (\r\n                roomTitle + \" - NORTH\"\r\n            ).upper():\r\n\r\n                north = v\r\n\r\n            elif name == (\r\n                roomTitle + \" - EAST\"\r\n            ).upper():\r\n\r\n                east = v\r\n\r\n            elif name == (\r\n                roomTitle + \" - SOUTH\"\r\n            ).upper():\r\n\r\n                south = v\r\n\r\n            elif name == (\r\n                roomTitle + \" - WEST\"\r\n            ).upper():\r\n\r\n                west = v\r\n\r\n        except:\r\n            pass\r\n\r\n    return plan, north, east, south, west\r\n\r\n\r\ndef set_project_browsing_view(element):\r\n\r\n    try:\r\n\r\n        p = element.LookupParameter(\r\n            \"Project Browsing Sheet Packge\"\r\n        )\r\n\r\n        if p and not p.IsReadOnly:\r\n            p.Set(\"ROOMS\")\r\n\r\n    except:\r\n        pass\r\n\r\n\r\n# ==================================================\r\n# VALIDATION\r\n# ==================================================\r\n\r\nif not rooms:\r\n\r\n    OUT = \"No rooms supplied.\"\r\n\r\nelif not titleBlockType:\r\n\r\n    OUT = \"No title block supplied.\"\r\n\r\nelse:\r\n\r\n    successCount = 0\r\n    skipCount = 0\r\n    failCount = 0\r\n\r\n    createdSheets = []\r\n    results = []\r\n\r\n    TransactionManager.Instance.EnsureInTransaction(doc)\r\n\r\n    for room in rooms:\r\n\r\n        try:\r\n\r\n            roomTitle = get_room_title(room)\r\n            roomNumber = get_room_number(room)\r\n\r\n            sheetNumber = \"{}-{}\".format(\r\n                sheetPrefix,\r\n                roomNumber\r\n            )\r\n\r\n            # =====================================\r\n            # SHEET EXISTS?\r\n            # =====================================\r\n\r\n            if sheet_exists(sheetNumber):\r\n\r\n                skipCount += 1\r\n\r\n                results.append(\r\n                    \"SKIPPED : {} (Sheet exists)\"\r\n                    .format(sheetNumber)\r\n                )\r\n\r\n                continue\r\n\r\n            # =====================================\r\n            # FIND VIEWS\r\n            # =====================================\r\n\r\n            planView, northView, eastView, southView, westView = \\\r\n                find_room_views(room)\r\n\r\n            missing = []\r\n\r\n            if not planView:\r\n                missing.append(\"PLAN\")\r\n\r\n            if not northView:\r\n                missing.append(\"NORTH\")\r\n\r\n            if not eastView:\r\n                missing.append(\"EAST\")\r\n\r\n            if not southView:\r\n                missing.append(\"SOUTH\")\r\n\r\n            if not westView:\r\n                missing.append(\"WEST\")\r\n\r\n            if missing:\r\n\r\n                skipCount += 1\r\n\r\n                results.append(\r\n                    \"SKIPPED : {} (Missing {})\"\r\n                    .format(\r\n                        roomTitle,\r\n                        \", \".join(missing)\r\n                    )\r\n                )\r\n\r\n                continue\r\n\r\n            # =====================================\r\n            # CREATE SHEET\r\n            # =====================================\r\n\r\n            sheet = ViewSheet.Create(\r\n                doc,\r\n                titleBlockType.Id\r\n            )\r\n\r\n            sheet.SheetNumber = sheetNumber\r\n\r\n            sheet.Name = (\r\n                roomTitle +\r\n                \" Interior Elevations\"\r\n            )\r\n\r\n            set_project_browsing_view(sheet)\r\n\r\n            doc.Regenerate()\r\n\r\n            # =====================================\r\n            # PLAN\r\n            # =====================================\r\n\r\n            Viewport.Create(\r\n                doc,\r\n                sheet.Id,\r\n                planView.Id,\r\n                point_to_xyz(planPoint)\r\n            )\r\n\r\n            # =====================================\r\n            # NORTH\r\n            # =====================================\r\n\r\n            Viewport.Create(\r\n                doc,\r\n                sheet.Id,\r\n                northView.Id,\r\n                point_to_xyz(northPoint)\r\n            )\r\n\r\n            # =====================================\r\n            # EAST\r\n            # =====================================\r\n\r\n            Viewport.Create(\r\n                doc,\r\n                sheet.Id,\r\n                eastView.Id,\r\n                point_to_xyz(eastPoint)\r\n            )\r\n\r\n            # =====================================\r\n            # SOUTH\r\n            # =====================================\r\n\r\n            Viewport.Create(\r\n                doc,\r\n                sheet.Id,\r\n                southView.Id,\r\n                point_to_xyz(southPoint)\r\n            )\r\n\r\n            # =====================================\r\n            # WEST\r\n            # =====================================\r\n\r\n            Viewport.Create(\r\n                doc,\r\n                sheet.Id,\r\n                westView.Id,\r\n                point_to_xyz(westPoint)\r\n            )\r\n\r\n            doc.Regenerate()\r\n\r\n            createdSheets.append(sheet)\r\n\r\n            successCount += 1\r\n\r\n            results.append(\r\n                \"SUCCESS : {}\".format(sheetNumber)\r\n            )\r\n\r\n        except Exception as ex:\r\n\r\n            failCount += 1\r\n\r\n            results.append(\r\n                \"FAILED : {} --> {}\"\r\n                .format(\r\n                    get_room_title(room),\r\n                    str(ex)\r\n                )\r\n            )\r\n\r\n    TransactionManager.Instance.TransactionTaskDone()\r\n\r\n    # ==================================================\r\n    # SUMMARY\r\n    # ==================================================\r\n\r\n    summary = (\r\n        \"ROOM SHEET GENERATOR\\n\"\r\n        \"=====================================\\n\\n\"\r\n        \"Rooms Selected : {}\\n\"\r\n        \"Sheets Created : {}\\n\"\r\n        \"Skipped        : {}\\n\"\r\n        \"Failed         : {}\\n\\n\"\r\n        \"DETAILS\\n\"\r\n        \"-------------------------------------\\n{}\\n\"\r\n    ).format(\r\n        len(rooms),\r\n        successCount,\r\n        skipCount,\r\n        failCount,\r\n        \"\\n\".join(results)\r\n    )\r\n\r\n    try:\r\n\r\n        MessageBox.Show(\r\n            summary,\r\n            \"Room Sheet Generator\"\r\n        )\r\n\r\n    except:\r\n        pass\r\n\r\n    OUT = {\r\n        \"Sheets\": createdSheets,\r\n        \"Created\": successCount,\r\n        \"Skipped\": skipCount,\r\n        \"Failed\": failCount,\r\n        \"Details\": results\r\n    }",
+      "Engine": "CPython3",
+      "EngineName": "CPython3",
+      "VariableInputPorts": true,
+      "Id": "9bdef0b29a1a4d67a70358be14995ca1",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [
+        {
+          "Id": "f71f623d5ddd4558b3797c3691ecffc7",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "a0bd1fc0adbd4c96beed730712ae814b",
+          "Name": "IN[1]",
+          "Description": "Input #1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "294353499789402b9dfd6baa1a9dcd9a",
+          "Name": "IN[2]",
+          "Description": "Input #2",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "dff789f216594a22b077e59ac8a53c75",
+          "Name": "IN[3]",
+          "Description": "Input #3",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "11a21874d0d2493fafba07d4310cbb52",
+          "Name": "IN[4]",
+          "Description": "Input #4",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "a6f29906f226462592a50facd481b80a",
+          "Name": "IN[5]",
+          "Description": "Input #5",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "d621d1692db14ec49e76ac418a107565",
+          "Name": "IN[6]",
+          "Description": "Input #6",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "10a551ea40794cbd9975febd289430bc",
+          "Name": "IN[7]",
+          "Description": "Input #7",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "0c1148686a7c49f9bf2538360bf930da",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.ZeroTouch.DSFunction, DynamoCore",
+      "Id": "e81ebe789e5b4849a4bfc68570fd11fa",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "323a40c3228740c8819320cd0a3ca29e",
+          "Name": "x",
+          "Description": "X coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "4cef49ccecaf48acbfeecc5f861074b2",
+          "Name": "y",
+          "Description": "Y coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "230138c349d1439f840443131ea7bce1",
+          "Name": "z",
+          "Description": "Z coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "f0b6483759434e1e9f4e5acd50885908",
+          "Name": "Point",
+          "Description": "Point created by coordinates",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "FunctionSignature": "Autodesk.DesignScript.Geometry.Point.ByCoordinates@double,double,double",
+      "Replication": "Auto",
+      "Description": "Form a Point given 3 cartesian coordinates\n\nPoint.ByCoordinates (x: double = 0, y: double = 0, z: double = 0): Point"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "dda43a3091354d00bb8748cd6aea2da0",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "602410d3cbc24bd5aa958cdd441bbc69",
+          "Name": "",
+          "Description": "Plan_Position_X",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "b3f75d7c1ac541c6bd0efef7a5370dc4",
+          "Name": "",
+          "Description": "Plan_Position_Y",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "bb7ac5fc80c9420dac25531d0e575abf",
+          "Name": "",
+          "Description": "Plan_Position_Z",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "Plan_Position_X:double=2.7;\nPlan_Position_Y:double=1.8;\nPlan_Position_Z:double=0;"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "0dbd9ea52ce240968c9720fd42cca712",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "0850c16a1b214df7923847df0491dc47",
+          "Name": "",
+          "Description": "North_Position_X",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "1f46499137294eb7bccc85e03f2b3e1f",
+          "Name": "",
+          "Description": "North_Position_Y",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "1f68ee1a754d4b2299f9b9a919a0a090",
+          "Name": "",
+          "Description": "North_Position_Z",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "North_Position_X:double=1.8;\nNorth_Position_Y:double=1.8;\nNorth_Position_Z:double=0;"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.ZeroTouch.DSFunction, DynamoCore",
+      "Id": "bab44b52fddb4fa0be917fc7a9fe8048",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "80f81e9971134a0c8202ff972d2fdac2",
+          "Name": "x",
+          "Description": "X coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "4549a10b58b04241ba48677c5a60bb4b",
+          "Name": "y",
+          "Description": "Y coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "53455b2bd6534745a871273cc5a12966",
+          "Name": "z",
+          "Description": "Z coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "cb7cca8e18b643f09b7c2ab9ff49b31f",
+          "Name": "Point",
+          "Description": "Point created by coordinates",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "FunctionSignature": "Autodesk.DesignScript.Geometry.Point.ByCoordinates@double,double,double",
+      "Replication": "Auto",
+      "Description": "Form a Point given 3 cartesian coordinates\n\nPoint.ByCoordinates (x: double = 0, y: double = 0, z: double = 0): Point"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "b1adc3d66cce47609c40e5227c629baf",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "c5837a59c1b846b6a818adc5f7bd164a",
+          "Name": "",
+          "Description": "East_Position_X",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "022fcbedb8f240bbbeb2a44843cb780b",
+          "Name": "",
+          "Description": "East_Position_Y",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "68282d3d28ad4af59c2d17c616779267",
+          "Name": "",
+          "Description": "East_Position_Z",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "East_Position_X:double=0.3;\nEast_Position_Y:double=1.8;\nEast_Position_Z:double=0;"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.ZeroTouch.DSFunction, DynamoCore",
+      "Id": "56ee1bac3c9f4fed8d165fd0e55c0a67",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "eb2c2db38c2e4216a55f6c7c65341f1b",
+          "Name": "x",
+          "Description": "X coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "9569e8b12b7948c8afa5f91c805784f9",
+          "Name": "y",
+          "Description": "Y coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "65d558d9c4d3444aab590bc755ca83c2",
+          "Name": "z",
+          "Description": "Z coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "51c4609a51d34c3192d9fef8a60885f9",
+          "Name": "Point",
+          "Description": "Point created by coordinates",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "FunctionSignature": "Autodesk.DesignScript.Geometry.Point.ByCoordinates@double,double,double",
+      "Replication": "Auto",
+      "Description": "Form a Point given 3 cartesian coordinates\n\nPoint.ByCoordinates (x: double = 0, y: double = 0, z: double = 0): Point"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "401df6b1c58a43e580bbe2463bd0ebba",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "1ba2e86daa544fc7aa9c77daedca03dc",
+          "Name": "",
+          "Description": "South_Position_X",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "bf15beea38d64bbf9f58f249de709bc4",
+          "Name": "",
+          "Description": "South_Position_Y",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "3567dd6705374a26a867e2ae4954c2a5",
+          "Name": "",
+          "Description": "South_Position_Z",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "South_Position_X:double=0.3;\nSouth_Position_Y:double=0.6;\nSouth_Position_Z:double=0;"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.ZeroTouch.DSFunction, DynamoCore",
+      "Id": "7af789c6a4f446f4a5aec9b87549afd6",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "9b7de697c5c7434f8939278c93d9ffed",
+          "Name": "x",
+          "Description": "X coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "a341ea8687ff4845aca9ee33a70bd588",
+          "Name": "y",
+          "Description": "Y coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "07fb9f8e935549c38379c4501e70e6cf",
+          "Name": "z",
+          "Description": "Z coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "285178886f8342b993cf28d78ec03cd1",
+          "Name": "Point",
+          "Description": "Point created by coordinates",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "FunctionSignature": "Autodesk.DesignScript.Geometry.Point.ByCoordinates@double,double,double",
+      "Replication": "Auto",
+      "Description": "Form a Point given 3 cartesian coordinates\n\nPoint.ByCoordinates (x: double = 0, y: double = 0, z: double = 0): Point"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "b9b4979fd6b94bde981a74415c3e4948",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "8904a1d8afa24d3fb9468563e483f13a",
+          "Name": "",
+          "Description": "West_Position_X",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "788c38479a704dd3aada67d14d9961a6",
+          "Name": "",
+          "Description": "West_Position_Y",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "0cbaa26b80784d43957de466d237a5ec",
+          "Name": "",
+          "Description": "West_Position_Z",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "West_Position_X:double=1.8;\nWest_Position_Y:double=0.6;\nWest_Position_Z:double=0;"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.ZeroTouch.DSFunction, DynamoCore",
+      "Id": "abc03005fc444673bc73dc6dea5ac656",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "6bf7a3a8470246b19a7a2223a7038f02",
+          "Name": "x",
+          "Description": "X coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "998c804db78643319a00de9d7ac9417c",
+          "Name": "y",
+          "Description": "Y coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "f20c8157fb864cfc85074161adfae60d",
+          "Name": "z",
+          "Description": "Z coordinate\n\ndouble\nDefault value : 0",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "069d42dbf95b4f7288f1b49ab633b7bd",
+          "Name": "Point",
+          "Description": "Point created by coordinates",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "FunctionSignature": "Autodesk.DesignScript.Geometry.Point.ByCoordinates@double,double,double",
+      "Replication": "Auto",
+      "Description": "Form a Point given 3 cartesian coordinates\n\nPoint.ByCoordinates (x: double = 0, y: double = 0, z: double = 0): Point"
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CodeBlockNodeModel, DynamoCore",
+      "Id": "58bf248d4c3346098651b012245a4bf4",
+      "NodeType": "CodeBlockNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "7ec0641c22b14fcdabe6bd37b0de515e",
+          "Name": "",
+          "Description": "SheetPrefix",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows for DesignScript code to be authored directly",
+      "Code": "SheetPrefix:string= \"ROOM\";"
+    },
+    {
+      "ConcreteType": "RhythmUI.TitleblockTypes, RhythmUI",
+      "SelectedIndex": 5,
+      "SelectedString": "TSΟ-AR-Title Block_A0:TSO_AR_A0",
+      "Id": "60353dc1148f4d9f85a841c4ab06a556",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "ee453d2de4c34fe9b3d602c833210f19",
+          "Name": "titleblockType",
+          "Description": "The selected titleblockType",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Allows you to select a titleblock type from your Revit file."
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CustomNodes.Function, DynamoCore",
+      "FunctionSignature": "0f02572a-0625-4873-a564-a255a9c750c1",
+      "FunctionType": "Graph",
+      "Id": "fd994f3a11dc4c338d771ef933c06a8f",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "1ada5ff815354701943cdb05fdd2419e",
+          "Name": "docOrLink",
+          "Description": "Uses current if none provided.\nAccepts document or link instance.\n\nvar[]..[]\nDefault value : null",
+          "UsingDefaultValue": true,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "c61d92ba37334ee08787ec00608878f1",
+          "Name": "valid",
+          "Description": "All rooms validly placed in the model",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "db5340fa68004c0396e1e96bf42d675c",
+          "Name": "invalid",
+          "Description": "All unplaced or unbound rooms",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Auto",
+      "Description": "Collects all valid/invalid rooms as two lists. Invalid rooms are not placed, or have issues that make their area invalid (not enclosed, redundant etc.)."
+    }
+  ],
+  "Connectors": [
+    {
+      "Start": "f0b6483759434e1e9f4e5acd50885908",
+      "End": "294353499789402b9dfd6baa1a9dcd9a",
+      "Id": "1149f50659134a0e95f0e790a2a1bdb1",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "602410d3cbc24bd5aa958cdd441bbc69",
+      "End": "323a40c3228740c8819320cd0a3ca29e",
+      "Id": "10b552c59d7c43eb816b1e7d8f08c240",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "b3f75d7c1ac541c6bd0efef7a5370dc4",
+      "End": "4cef49ccecaf48acbfeecc5f861074b2",
+      "Id": "928d7821738b48f3952bb24e9d01a4cf",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "bb7ac5fc80c9420dac25531d0e575abf",
+      "End": "230138c349d1439f840443131ea7bce1",
+      "Id": "2df38ebde47d4fe58c41829e6c4d6fcc",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "0850c16a1b214df7923847df0491dc47",
+      "End": "80f81e9971134a0c8202ff972d2fdac2",
+      "Id": "c117545c45694b029de2ab12adeba010",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "1f46499137294eb7bccc85e03f2b3e1f",
+      "End": "4549a10b58b04241ba48677c5a60bb4b",
+      "Id": "98b00da69aec4d389bca6f3a0cefb6da",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "1f68ee1a754d4b2299f9b9a919a0a090",
+      "End": "53455b2bd6534745a871273cc5a12966",
+      "Id": "de9182addc5343bcb974595e84df4be8",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "cb7cca8e18b643f09b7c2ab9ff49b31f",
+      "End": "dff789f216594a22b077e59ac8a53c75",
+      "Id": "7fc894cfdcaa481496441c549ac5c244",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "c5837a59c1b846b6a818adc5f7bd164a",
+      "End": "eb2c2db38c2e4216a55f6c7c65341f1b",
+      "Id": "d4f500bb46d34ae0a0eea2a8da974648",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "022fcbedb8f240bbbeb2a44843cb780b",
+      "End": "9569e8b12b7948c8afa5f91c805784f9",
+      "Id": "fedae7c6f9ce4e25a1bd4636d530ad5d",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "68282d3d28ad4af59c2d17c616779267",
+      "End": "65d558d9c4d3444aab590bc755ca83c2",
+      "Id": "544138d240404984a8f2ced17f3db06a",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "51c4609a51d34c3192d9fef8a60885f9",
+      "End": "11a21874d0d2493fafba07d4310cbb52",
+      "Id": "54071d83cbf946109c8b80725612d983",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "1ba2e86daa544fc7aa9c77daedca03dc",
+      "End": "9b7de697c5c7434f8939278c93d9ffed",
+      "Id": "ebd83dd0578b47b0afd8d102166071ad",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "bf15beea38d64bbf9f58f249de709bc4",
+      "End": "a341ea8687ff4845aca9ee33a70bd588",
+      "Id": "7c22350e8d3e4f3687e677af52ef9cc2",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "3567dd6705374a26a867e2ae4954c2a5",
+      "End": "07fb9f8e935549c38379c4501e70e6cf",
+      "Id": "aa03c010802f469097d1198640f65d17",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "285178886f8342b993cf28d78ec03cd1",
+      "End": "a6f29906f226462592a50facd481b80a",
+      "Id": "eb10010858f743ef92c5b91f73b67812",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "8904a1d8afa24d3fb9468563e483f13a",
+      "End": "6bf7a3a8470246b19a7a2223a7038f02",
+      "Id": "162228ec35d6440ca88304212c30699f",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "788c38479a704dd3aada67d14d9961a6",
+      "End": "998c804db78643319a00de9d7ac9417c",
+      "Id": "5c0dc4e8fb3e4b4db6e9fdd396f1405f",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "0cbaa26b80784d43957de466d237a5ec",
+      "End": "f20c8157fb864cfc85074161adfae60d",
+      "Id": "2aac99b6324a4023bac4d8ffac939201",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "069d42dbf95b4f7288f1b49ab633b7bd",
+      "End": "d621d1692db14ec49e76ac418a107565",
+      "Id": "0cb58709d9d849bb9bb150e30d55a657",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "7ec0641c22b14fcdabe6bd37b0de515e",
+      "End": "10a551ea40794cbd9975febd289430bc",
+      "Id": "e0cb95f1154c435bac3096c8e819986f",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "ee453d2de4c34fe9b3d602c833210f19",
+      "End": "a0bd1fc0adbd4c96beed730712ae814b",
+      "Id": "4beb88e9057d4db4b9c7dcc9e0329004",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "c61d92ba37334ee08787ec00608878f1",
+      "End": "f71f623d5ddd4558b3797c3691ecffc7",
+      "Id": "ce9d5daa01154763b304227d3c0bba7e",
+      "IsHidden": "False"
+    }
+  ],
+  "Dependencies": [
+    "0f02572a-0625-4873-a564-a255a9c750c1"
+  ],
+  "NodeLibraryDependencies": [
+    {
+      "Name": "Rhythm",
+      "Version": "2025.10.3",
+      "ReferenceType": "Package",
+      "Nodes": [
+        "60353dc1148f4d9f85a841c4ab06a556"
+      ]
+    },
+    {
+      "Name": "Crumple",
+      "Version": "2026.8.1",
+      "ReferenceType": "Package",
+      "Nodes": [
+        "fd994f3a11dc4c338d771ef933c06a8f"
+      ]
+    }
+  ],
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "2.19",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "6.1",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.19.3.6394",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "9bdef0b29a1a4d67a70358be14995ca1",
+        "Name": "Python Script 2",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": true,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 2472.6226394302862,
+        "Y": 430.2521338228272
+      },
+      {
+        "Id": "e81ebe789e5b4849a4bfc68570fd11fa",
+        "Name": "Point.ByCoordinates",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1506.5974185194796,
+        "Y": 942.34515948002968
+      },
+      {
+        "Id": "dda43a3091354d00bb8748cd6aea2da0",
+        "Name": "Code Block - PLAN VIEW",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 960.7873935623843,
+        "Y": 779.03990113285488
+      },
+      {
+        "Id": "0dbd9ea52ce240968c9720fd42cca712",
+        "Name": "Code Block - NORTH VIEW",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 942.45275689756056,
+        "Y": 1095.913225631426
+      },
+      {
+        "Id": "bab44b52fddb4fa0be917fc7a9fe8048",
+        "Name": "Point.ByCoordinates",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1500.3961892475372,
+        "Y": 1209.3368494623737
+      },
+      {
+        "Id": "b1adc3d66cce47609c40e5227c629baf",
+        "Name": "Code Block - EAST VIEW",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 942.10310654120372,
+        "Y": 1342.6796422122961
+      },
+      {
+        "Id": "56ee1bac3c9f4fed8d165fd0e55c0a67",
+        "Name": "Point.ByCoordinates",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1510.33165650222,
+        "Y": 1419.9270954504409
+      },
+      {
+        "Id": "401df6b1c58a43e580bbe2463bd0ebba",
+        "Name": "Code Block - SOUTH VIEW",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 934.34626340798968,
+        "Y": 1555.4036013164884
+      },
+      {
+        "Id": "7af789c6a4f446f4a5aec9b87549afd6",
+        "Name": "Point.ByCoordinates",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1508.3938896793877,
+        "Y": 1627.9073124523516
+      },
+      {
+        "Id": "b9b4979fd6b94bde981a74415c3e4948",
+        "Name": "Code Block - WEST VIEW",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 947.829394217852,
+        "Y": 1762.83384533889
+      },
+      {
+        "Id": "abc03005fc444673bc73dc6dea5ac656",
+        "Name": "Point.ByCoordinates",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1501.8000723018663,
+        "Y": 1836.9185720386515
+      },
+      {
+        "Id": "58bf248d4c3346098651b012245a4bf4",
+        "Name": "Code Block",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1518.8145065429949,
+        "Y": 710.281781898153
+      },
+      {
+        "Id": "60353dc1148f4d9f85a841c4ab06a556",
+        "Name": "Titleblock Types",
+        "IsSetAsInput": true,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1456.8757820721084,
+        "Y": 569.2264559090595
+      },
+      {
+        "Id": "fd994f3a11dc4c338d771ef933c06a8f",
+        "Name": "© Collect.Rooms",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1538.8914616980476,
+        "Y": 83.229781902024087
+      }
+    ],
+    "Annotations": [],
+    "X": -661.0290296984117,
+    "Y": -1815.7552169944997,
+    "Zoom": 1.3413172591395002
+  }
+}

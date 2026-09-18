@@ -1,0 +1,266 @@
+{
+  "Uuid": "da7552a3-fbbb-4c3a-b557-9e883edba9bc",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "ModelHealthDashboard_wip",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [
+    {
+      "Id": "199eaed0ec104622ad067ec3e948f558",
+      "Name": "Python Script",
+      "Type": "string",
+      "InitialValue": "Error: 'UIDocument' object has no attribute 'CanPostCommand'",
+      "Description": "Runs an embedded Python script."
+    },
+    {
+      "Id": "4e807034a9334352a1f20e534b269a64",
+      "Name": "Python Script : Create _MODEL_STATISTICS_3D View",
+      "Type": "unknown",
+      "InitialValue": "",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "import os\r\nfrom Autodesk.Revit.DB import *\r\nfrom RevitServices.Persistence import DocumentManager\r\nfrom RevitServices.Transactions import TransactionManager\r\nfrom System.Windows.Forms import MessageBox, MessageBoxButtons, MessageBoxIcon\r\n\r\n\r\n# ============================================================\r\n# DOCUMENT\r\n# ============================================================\r\n\r\ndoc = DocumentManager.Instance.CurrentDBDocument\r\nuidoc = DocumentManager.Instance.CurrentUIApplication.ActiveUIDocument\r\n\r\n\r\ntry:\r\n\r\n    # ========================================================\r\n    # 1. MODEL SIZE\r\n    # ========================================================\r\n\r\n    file_path = doc.PathName\r\n\r\n    if file_path and file_path != \"\" and file_path != \"<Internal>\":\r\n        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)\r\n        model_size = str(round(file_size_mb, 2)) + \" MB\"\r\n    else:\r\n        model_size = \"Document not saved\"\r\n\r\n\r\n\r\n    # ========================================================\r\n    # 7. EXECUTE REVIT'S ACTUAL \"SELECT ALL\" COMMAND\r\n    # ========================================================\r\n\r\n    select_all_command_id = ( IN[0])\r\n       \r\n\r\n    if select_all_command_id is None:\r\n        raise Exception(\r\n            \"Could not find Revit Select All command.\"\r\n        )\r\n\r\n    if not uidoc.CanPostCommand(select_all_command_id):\r\n        raise Exception(\r\n            \"Revit Select All command cannot currently be executed.\"\r\n        )\r\n\r\n    uidoc.Application.PostCommand(\r\n        select_all_command_id\r\n    )\r\n\r\n\r\n    # ========================================================\r\n    # IMPORTANT\r\n    #\r\n    # PostCommand is asynchronous.\r\n    #\r\n    # The command is posted to Revit's UI queue and therefore\r\n    # the selection is NOT necessarily available immediately\r\n    # on the next line.\r\n    # ========================================================\r\n\r\n\r\n    # ========================================================\r\n    # 8. READ THE RESULTING REVIT SELECTION\r\n    # ========================================================\r\n\r\n    selected_ids = uidoc.Selection.GetElementIds()\r\n\r\n    element_count = selected_ids.Count\r\n\r\n    model_elements = (\r\n        str(element_count)\r\n        + \" elements\"\r\n    )\r\n\r\n\r\n    # ========================================================\r\n    # 9. MODEL WARNINGS\r\n    # ========================================================\r\n\r\n    warning_count = len(\r\n        doc.GetWarnings()\r\n    )\r\n\r\n    model_warnings = (\r\n        str(warning_count)\r\n        + \" warnings\"\r\n    )\r\n\r\n\r\n    # ========================================================\r\n    # 10. LOADED REVIT LINKS\r\n    # ========================================================\r\n\r\n    link_count = FilteredElementCollector(doc) \\\r\n        .OfClass(RevitLinkInstance) \\\r\n        .GetElementCount()\r\n\r\n    loaded_links = (\r\n        str(link_count)\r\n        + \" links\"\r\n    )\r\n\r\n\r\n    # ========================================================\r\n    # 11. PROJECT INFORMATION\r\n    # ========================================================\r\n\r\n    pi = FilteredElementCollector(doc) \\\r\n        .OfCategory(\r\n            BuiltInCategory.OST_ProjectInformation\r\n        ) \\\r\n        .FirstElement()\r\n\r\n\r\n    if pi is None:\r\n\r\n        OUT = \"Project Information element not found.\"\r\n\r\n    else:\r\n\r\n        TransactionManager.Instance.EnsureInTransaction(doc)\r\n\r\n        results = []\r\n\r\n        parameters_to_write = [\r\n            (\"Model Size\", model_size),\r\n            (\"Model Elements\", model_elements),\r\n            (\"Model Warnings\", model_warnings),\r\n            (\"Loaded Links\", loaded_links)\r\n        ]\r\n\r\n        for pname, pvalue in parameters_to_write:\r\n\r\n            p = pi.LookupParameter(pname)\r\n\r\n            if p and not p.IsReadOnly:\r\n\r\n                try:\r\n\r\n                    ok = p.Set(pvalue)\r\n\r\n                    results.append(\r\n                        pname\r\n                        + \": \"\r\n                        + str(ok)\r\n                    )\r\n\r\n                except Exception as parameter_error:\r\n\r\n                    results.append(\r\n                        pname\r\n                        + \": ERROR - \"\r\n                        + str(parameter_error)\r\n                    )\r\n\r\n            else:\r\n\r\n                results.append(\r\n                    pname\r\n                    + \": not found or read-only\"\r\n                )\r\n\r\n        TransactionManager.Instance.TransactionTaskDone()\r\n\r\n\r\n        # ====================================================\r\n        # 12. MESSAGE\r\n        # ====================================================\r\n\r\n        message = (\r\n            \"MODEL STATISTICS\\n\\n\"\r\n            + \"3D View:         \"\r\n            + three_d_view.Name\r\n            + \"\\n\"\r\n            + \"Model Size:      \"\r\n            + model_size\r\n            + \"\\n\"\r\n            + \"Model Elements:  \"\r\n            + model_elements\r\n            + \"\\n\"\r\n            + \"Model Warnings:  \"\r\n            + model_warnings\r\n            + \"\\n\"\r\n            + \"Loaded Links:    \"\r\n            + loaded_links\r\n            + \"\\n\\n\"\r\n            + \"Selection:\\n\"\r\n            + \"Revit Select All command executed.\"\r\n            + \"\\n\"\r\n            + \"Selected elements: \"\r\n            + str(element_count)\r\n            + \"\\n\\n\"\r\n            + \"Write results:\\n\"\r\n            + \"\\n\".join(results)\r\n        )\r\n\r\n\r\n        MessageBox.Show(\r\n            message,\r\n            \"Model Statistics\",\r\n            MessageBoxButtons.OK,\r\n            MessageBoxIcon.Information\r\n        )\r\n\r\n\r\n        # ====================================================\r\n        # 13. DYNAMO OUTPUT\r\n        # ====================================================\r\n\r\n        OUT = [\r\n            model_size,\r\n            model_elements,\r\n            model_warnings,\r\n            loaded_links,\r\n            results,\r\n            three_d_view.Name,\r\n            element_count\r\n        ]\r\n\r\n\r\nexcept Exception as e:\r\n\r\n    OUT = \"Error: \" + str(e)",
+      "Engine": "CPython3",
+      "EngineName": "CPython3",
+      "VariableInputPorts": true,
+      "Id": "199eaed0ec104622ad067ec3e948f558",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [
+        {
+          "Id": "5243985749be445b8bb3b780b7a04aa9",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "47531e21e0f147e083ab0fd0fedd4d46",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    },
+    {
+      "ConcreteType": "DSRevitNodesUI.Views, DSRevitNodesUI",
+      "SelectedIndex": 0,
+      "SelectedString": "_MODEL_STATISTICS_3D",
+      "Id": "2dc8e67bf7934225ab72435fee9e5293",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "6796af8d329d49f6bbf76441f8d02b74",
+          "Name": "Views",
+          "Description": "The selected Views",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "All views available in the current document."
+    },
+    {
+      "ConcreteType": "Dynamo.Graph.Nodes.CustomNodes.Function, DynamoCore",
+      "FunctionSignature": "51e3d5bc-cc07-4e8b-b976-11dc51cf6843",
+      "FunctionType": "Graph",
+      "Id": "8308b42bcbfa41c38b6d3e652a5ae7a7",
+      "NodeType": "FunctionNode",
+      "Inputs": [
+        {
+          "Id": "b9e4e32ee82444cd981908a0948b0454",
+          "Name": "Views_",
+          "Description": "var[]",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "6666768dff7b4728905b124c6fce72fa",
+          "Name": "Element(s)",
+          "Description": "return value",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Auto",
+      "Description": "Retrieves all visible element in a view or a set of views"
+    },
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "import os\r\nfrom Autodesk.Revit.DB import *\r\nfrom RevitServices.Persistence import DocumentManager\r\nfrom RevitServices.Transactions import TransactionManager\r\nfrom System.Windows.Forms import MessageBox, MessageBoxButtons, MessageBoxIcon\r\n\r\n\r\n# ============================================================\r\n# DOCUMENT\r\n# ============================================================\r\n\r\ndoc = DocumentManager.Instance.CurrentDBDocument\r\nuidoc = DocumentManager.Instance.CurrentUIApplication.ActiveUIDocument\r\n\r\n\r\ntry:\r\n\r\n   \r\n    # ========================================================\r\n    # 2. CREATE / USE DEDICATED 3D VIEW\r\n    # ========================================================\r\n\r\n    view_name = \"_MODEL_STATISTICS_3D\"\r\n\r\n    three_d_view = None\r\n\r\n    existing_views = FilteredElementCollector(doc) \\\r\n        .OfClass(View3D) \\\r\n        .ToElements()\r\n\r\n    for v in existing_views:\r\n\r\n        if not v.IsTemplate and v.Name == view_name:\r\n            three_d_view = v\r\n            break\r\n\r\n    # ========================================================\r\n    # 3. CREATE 3D VIEW IF REQUIRED\r\n    # ========================================================\r\n\r\n    if three_d_view is None:\r\n\r\n        view_family_type = None\r\n\r\n        view_family_types = FilteredElementCollector(doc) \\\r\n            .OfClass(ViewFamilyType) \\\r\n            .ToElements()\r\n\r\n        for vft in view_family_types:\r\n\r\n            if vft.ViewFamily == ViewFamily.ThreeDimensional:\r\n                view_family_type = vft\r\n                break\r\n\r\n        if view_family_type is None:\r\n            raise Exception(\r\n                \"Could not find a 3D ViewFamilyType.\"\r\n            )\r\n\r\n        TransactionManager.Instance.EnsureInTransaction(doc)\r\n\r\n        three_d_view = View3D.CreateIsometric(\r\n            doc,\r\n            view_family_type.Id\r\n        )\r\n\r\n        three_d_view.Name = view_name\r\n\r\n        TransactionManager.Instance.TransactionTaskDone()\r\n\r\n    # ========================================================\r\n    # 4. REMOVE ALL VIEW FILTERS\r\n    # ========================================================\r\n\r\n    TransactionManager.Instance.EnsureInTransaction(doc)\r\n\r\n    filter_ids = three_d_view.GetFilters()\r\n\r\n    for filter_id in filter_ids:\r\n\r\n        try:\r\n            three_d_view.RemoveFilter(filter_id)\r\n        except:\r\n            pass\r\n\r\n    TransactionManager.Instance.TransactionTaskDone()\r\n\r\n \r\n    # ====================================================\r\n    # 13. DYNAMO OUTPUT\r\n    # ====================================================\r\n\r\n    OUT = [\r\n          \r\n            three_d_view.Name,\r\n        ]\r\n\r\n\r\nexcept Exception as e:\r\n\r\n    OUT = \"Error: \" + str(e)\r\n    \r\n    \r\nmessage = (\r\n        \"MODEL STATISTICS\\n\\n\"\r\n        + \"3D View:         \"\r\n        + three_d_view.Name\r\n    )\r\n\r\n\r\n    MessageBox.Show(\r\n        message,\r\n        \"Model Statistics\",\r\n        MessageBoxButtons.OK,\r\n        MessageBoxIcon.Information\r\n    )",
+      "Engine": "IronPython2",
+      "EngineName": "IronPython2",
+      "VariableInputPorts": true,
+      "Id": "4e807034a9334352a1f20e534b269a64",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [
+        {
+          "Id": "e19c56342e0f44dbb2abc33bc30055e0",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "e49ca2e1c72e4782aef6177e119f0f5c",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Connectors": [
+    {
+      "Start": "6796af8d329d49f6bbf76441f8d02b74",
+      "End": "b9e4e32ee82444cd981908a0948b0454",
+      "Id": "4befb466460646df97f868efa965f5c0",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "6666768dff7b4728905b124c6fce72fa",
+      "End": "5243985749be445b8bb3b780b7a04aa9",
+      "Id": "e172047d06aa4f1ab845893a9b57bd4a",
+      "IsHidden": "False"
+    }
+  ],
+  "Dependencies": [
+    "51e3d5bc-cc07-4e8b-b976-11dc51cf6843"
+  ],
+  "NodeLibraryDependencies": [
+    {
+      "Name": "Data-Shapes",
+      "Version": "2026.4.0",
+      "ReferenceType": "Package",
+      "Nodes": [
+        "8308b42bcbfa41c38b6d3e652a5ae7a7"
+      ]
+    }
+  ],
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "2.19",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "6.1",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.19.3.6394",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "199eaed0ec104622ad067ec3e948f558",
+        "Name": "Python Script",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": true,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1726.6638830080251,
+        "Y": 730.29358323214785
+      },
+      {
+        "Id": "2dc8e67bf7934225ab72435fee9e5293",
+        "Name": "Views",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 885.64903888227013,
+        "Y": 894.64272619785913
+      },
+      {
+        "Id": "8308b42bcbfa41c38b6d3e652a5ae7a7",
+        "Name": "All Elements In View(s)",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 1268.8865460665108,
+        "Y": 846.40641135544467
+      },
+      {
+        "Id": "4e807034a9334352a1f20e534b269a64",
+        "Name": "Python Script : Create _MODEL_STATISTICS_3D View",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": true,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 692.97572901308672,
+        "Y": 533.8598474312904
+      }
+    ],
+    "Annotations": [],
+    "X": 77.45933338609575,
+    "Y": -28.555681523195574,
+    "Zoom": 0.78473795248621625
+  }
+}

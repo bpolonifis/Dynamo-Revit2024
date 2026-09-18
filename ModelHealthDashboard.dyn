@@ -1,0 +1,120 @@
+{
+  "Uuid": "da7552a3-fbbb-4c3a-b557-9e883edba9bc",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "ModelHealthDashboard",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [
+    {
+      "Id": "199eaed0ec104622ad067ec3e948f558",
+      "Name": "Python Script",
+      "Type": "unknown",
+      "InitialValue": "",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "import os\r\nfrom Autodesk.Revit.DB import *\r\nfrom RevitServices.Persistence import DocumentManager\r\nfrom RevitServices.Transactions import TransactionManager\r\nfrom System.Windows.Forms import MessageBox, MessageBoxButtons, MessageBoxIcon\r\n\r\ndoc = DocumentManager.Instance.CurrentDBDocument\r\n\r\ntry:\r\n    file_path = doc.PathName\r\n\r\n    if file_path and file_path != \"\" and file_path != \"<Internal>\":\r\n        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)\r\n        model_size = str(round(file_size_mb, 2)) + \" MB\"\r\n    else:\r\n        model_size = \"Document not saved\"\r\n\r\n    element_count = FilteredElementCollector(doc).GetElementCount()#\r\n    #element_count = len(\r\n    #FilteredElementCollector(doc)\r\n    #.WhereElementIsNotElementType()\r\n    #.ToElements())\r\n    model_elements = str(element_count) + \" elements\"\r\n    \r\n    warning_count = len(doc.GetWarnings())\r\n    model_warnings = str(warning_count) + \" warnings\"\r\n    \r\n    link_count = FilteredElementCollector(doc).OfClass(RevitLinkInstance).GetElementCount()\r\n    loaded_links = str(link_count) + \" links\"\r\n\r\n    pi = FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_ProjectInformation).FirstElement()\r\n\r\n    if pi is None:\r\n        OUT = \"Project Information element not found.\"\r\n    else:\r\n        TransactionManager.Instance.EnsureInTransaction(doc)\r\n\r\n        results = []\r\n        for pname, pvalue in [\r\n            (\"Model Size\", model_size),\r\n            (\"Model Elements\", model_elements),\r\n            (\"Model Warnings\", model_warnings),\r\n            (\"Loaded Links\", loaded_links)\r\n        ]:\r\n            p = pi.LookupParameter(pname)\r\n            if p and not p.IsReadOnly:\r\n                ok = p.Set(pvalue)\r\n                results.append(pname + \": \" + str(ok))\r\n            else:\r\n                results.append(pname + \": not found or read-only\")\r\n\r\n        TransactionManager.Instance.TransactionTaskDone()\r\n\r\n        message = \"MODEL STATISTICS\\n\\n\" + \\\r\n                  \"Model Size:     \" + model_size + \"\\n\" + \\\r\n                  \"Model Elements: \" + model_elements + \"\\n\" + \\\r\n                  \"Model Warnings: \" + model_warnings + \"\\n\" + \\\r\n                  \"Loaded Links:   \" + loaded_links + \"\\n\\n\" + \\\r\n                  \"Write results:\\n\" + \"\\n\".join(results)\r\n\r\n        MessageBox.Show(message, \"Model Statistics\", MessageBoxButtons.OK, MessageBoxIcon.Information)\r\n        OUT = [model_size, model_elements, model_warnings, loaded_links, results]\r\n\r\nexcept Exception as e:\r\n    OUT = \"Error: \" + str(e)",
+      "Engine": "CPython3",
+      "EngineName": "CPython3",
+      "VariableInputPorts": true,
+      "Id": "199eaed0ec104622ad067ec3e948f558",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [
+        {
+          "Id": "5243985749be445b8bb3b780b7a04aa9",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "47531e21e0f147e083ab0fd0fedd4d46",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Runs an embedded Python script."
+    }
+  ],
+  "Connectors": [],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [],
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Properties",
+      "Version": "2.19",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "6.1",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "None",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.19.3.6394",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Background Preview",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "199eaed0ec104622ad067ec3e948f558",
+        "Name": "Python Script",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": true,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 675.76224721181768,
+        "Y": 445.22284926616584
+      }
+    ],
+    "Annotations": [],
+    "X": -260.205006522891,
+    "Y": -99.512363057180892,
+    "Zoom": 0.612283078543345
+  }
+}
